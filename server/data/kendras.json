@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Jan Aushadhi Kendra - Vijay Nagar",
+    "address": "Near Vijay Nagar Square, Scheme No. 54, Vijay Nagar, Indore, MP 452010",
+    "phone": "+919999000001",
+    "latitude": 22.7531,
+    "longitude": 75.8937,
+    "verified": false
+  },
+  {
+    "name": "Jan Aushadhi Kendra - Rajwada",
+    "address": "Near Rajwada Palace, Old Palasia, Indore, MP 452002",
+    "phone": "+919999000002",
+    "latitude": 22.7177,
+    "longitude": 75.8557,
+    "verified": false
+  },
+  {
+    "name": "Jan Aushadhi Kendra - MG Road",
+    "address": "MG Road, Near Sarafa Bazaar, Indore, MP 452007",
+    "phone": "+919999000003",
+    "latitude": 22.7211,
+    "longitude": 75.8650,
+    "verified": false
+  },
+  {
+    "name": "Jan Aushadhi Kendra - Rajendra Nagar",
+    "address": "Rajendra Nagar Main Road, Indore, MP 452012",
+    "phone": "+919999000004",
+    "latitude": 22.7308,
+    "longitude": 75.9012,
+    "verified": false
+  },
+  {
+    "name": "Jan Aushadhi Kendra - Bhawarkua",
+    "address": "Bhawarkua Square, A.B. Road, Indore, MP 452001",
+    "phone": "+919999000005",
+    "latitude": 22.6967,
+    "longitude": 75.8650,
+    "verified": false
+  }
+]

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import csv
 import io
@@ -171,7 +172,7 @@ def extract_lat_lng_from_maps_url(maps_url: str) -> tuple[float, float] | None:
 
 
 def fetch_kendras_from_sheet(csv_url: str) -> list[dict[str, Any]]:
-    with httpx.Client(timeout=15) as client:
+    with httpx.Client(timeout=15, follow_redirects=True) as client:
         response = client.get(csv_url)
         response.raise_for_status()
 
@@ -219,12 +220,19 @@ def load_kendras() -> list[dict[str, Any]]:
         try:
             kendras = fetch_kendras_from_sheet(KENDRA_SHEET_CSV_URL)
             if kendras:
+                print(f"[Kendra] Loaded {len(kendras)} kendras from Google Sheet")
                 _kendra_cache["data"] = kendras
                 _kendra_cache["fetched_at"] = now
                 return kendras
-        except httpx.HTTPError:
-            # Sheet unreachable this request — fall through to static backup below.
-            pass
+            print("[Kendra] Sheet fetch returned zero usable rows (check maps_url column)")
+        except httpx.HTTPError as error:
+            print(f"[Kendra] Sheet fetch failed: {error!r} — falling back to static file")
+    else:
+        print("[Kendra] KENDRA_SHEET_CSV_URL not set — using static file")
+
+    if not KENDRA_DATA_PATH.exists():
+        print(f"[Kendra] Fallback file also missing: {KENDRA_DATA_PATH}")
+        return []
 
     with KENDRA_DATA_PATH.open("r", encoding="utf-8") as file:
         kendras = json.load(file)
@@ -302,16 +310,26 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
         "generationConfig": {"responseMimeType": "application/json"},
     }
 
+    max_attempts = 3
+    response = None
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                headers={
-                    "x-goog-api-key": api_key,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        for attempt in range(1, max_attempts + 1):
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    headers={
+                        "x-goog-api-key": api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+
+            if response.status_code != 503:
+                break
+
+            print(f"[AI lookup] Gemini 503 (model overloaded), attempt {attempt}/{max_attempts}")
+            if attempt < max_attempts:
+                await asyncio.sleep(2 * attempt)
     except httpx.HTTPError:
         return MedicineMatchResponse(
             matchedName=None,
@@ -322,11 +340,16 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
 
     if response.status_code >= 400:
         print(f"[AI lookup] Gemini error {response.status_code}: {response.text[:500]}")
+        fail_message = (
+            "The AI model is busy right now. Please try again in a few seconds."
+            if response.status_code == 503
+            else f"AI lookup failed (HTTP {response.status_code}). Try typing the medicine name manually."
+        )
         return MedicineMatchResponse(
             matchedName=None,
             confidence=0,
             source="text",
-            message=f"AI lookup failed (HTTP {response.status_code}). Try typing the medicine name manually.",
+            message=fail_message,
         )
 
     data = response.json()
@@ -403,18 +426,33 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
         "generationConfig": {"responseMimeType": "application/json"},
     }
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={
-                "x-goog-api-key": api_key,
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
+    max_attempts = 3
+    response = None
+    for attempt in range(1, max_attempts + 1):
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={
+                    "x-goog-api-key": api_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+
+        if response.status_code != 503:
+            break
+
+        print(f"[Image lookup] Gemini 503 (model overloaded), attempt {attempt}/{max_attempts}")
+        if attempt < max_attempts:
+            await asyncio.sleep(2 * attempt)
 
     if response.status_code >= 400:
         print(f"[Image lookup] Gemini error {response.status_code}: {response.text[:500]}")
+        if response.status_code == 503:
+            raise HTTPException(
+                status_code=503,
+                detail="The AI model is busy right now. Please try again in a few seconds.",
+            )
         raise HTTPException(status_code=502, detail="Image extraction failed.")
 
     data = response.json()

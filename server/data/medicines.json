@@ -1,0 +1,50 @@
+[
+  {
+    "brandNames": ["Crocin", "Calpol", "Dolo", "Pacimol"],
+    "genericName": "Paracetamol",
+    "strengths": ["500mg", "650mg"],
+    "aliases": ["Acetaminophen"],
+    "janAushadiAvailable": true,
+    "lastVerified": "2026-06-24"
+  },
+  {
+    "brandNames": ["Combiflam", "Brufen", "Ibugesic"],
+    "genericName": "Ibuprofen",
+    "strengths": ["200mg", "400mg"],
+    "aliases": [],
+    "janAushadiAvailable": true,
+    "lastVerified": "2026-06-24"
+  },
+  {
+    "brandNames": ["Pan", "Pantocid", "Pantozol"],
+    "genericName": "Pantoprazole",
+    "strengths": ["40mg"],
+    "aliases": [],
+    "janAushadiAvailable": true,
+    "lastVerified": "2026-06-24"
+  },
+  {
+    "brandNames": ["Azee", "Azithral", "Zithrox"],
+    "genericName": "Azithromycin",
+    "strengths": ["250mg", "500mg"],
+    "aliases": [],
+    "janAushadiAvailable": true,
+    "lastVerified": "2026-06-24"
+  },
+  {
+    "brandNames": ["Allegra", "Fexova"],
+    "genericName": "Fexofenadine",
+    "strengths": ["120mg", "180mg"],
+    "aliases": [],
+    "janAushadiAvailable": true,
+    "lastVerified": "2026-06-24"
+  },
+  {
+    "brandNames": ["Cetcip", "Cetzine"],
+    "genericName": "Cetirizine",
+    "strengths": ["10mg"],
+    "aliases": [],
+    "janAushadiAvailable": true,
+    "lastVerified": "2026-06-24"
+  }
+]

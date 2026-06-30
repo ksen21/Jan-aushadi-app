@@ -278,9 +278,9 @@ def clean_base64_image(image: str) -> str:
 
 
 async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("NARAROUTER_API_KEY")
     if not api_key:
-        print("[AI lookup] GEMINI_API_KEY not found in environment — check server/.env")
+        print("[AI lookup] NARAROUTER_API_KEY not found in environment — check server/.env")
         return MedicineMatchResponse(
             matchedName=None,
             confidence=0,
@@ -288,9 +288,10 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
             message="No confident match found. Try typing the medicine name manually.",
         )
 
-    print(f"[AI lookup] Calling Gemini for query={query!r}")
+    print(f"[AI lookup] Calling NaraRouter for query={query!r}")
 
-    model = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.5-flash")
+    base_url = os.getenv("NARAROUTER_BASE_URL", "https://router.bynara.id/v1")
+    model = os.getenv("NARAROUTER_TEXT_MODEL", "claude-haiku-4.5")
     prompt = (
         "You are identifying the generic (active ingredient) name "
         "for a medicine brand name sold in India, for an app that "
@@ -299,15 +300,15 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
         f'Brand name: "{query}". '
         "If you are not confident about the generic name, return "
         "null instead of guessing. "
-        "Respond with ONLY JSON in this exact shape: "
+        "Respond with ONLY JSON in this exact shape, and nothing else: "
         '{"generic_name": "name or null", '
         '"common_strengths": ["e.g. 100mg", "..."], '
         '"confidence": 0.0}'
     )
 
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseMimeType": "application/json"},
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
     }
 
     max_attempts = 3
@@ -316,18 +317,18 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
         for attempt in range(1, max_attempts + 1):
             async with httpx.AsyncClient(timeout=20) as client:
                 response = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    f"{base_url}/chat/completions",
                     headers={
-                        "x-goog-api-key": api_key,
+                        "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
                     json=payload,
                 )
 
-            if response.status_code != 503:
+            if response.status_code not in (429, 503):
                 break
 
-            print(f"[AI lookup] Gemini 503 (model overloaded), attempt {attempt}/{max_attempts}")
+            print(f"[AI lookup] NaraRouter {response.status_code} (busy/rate-limited), attempt {attempt}/{max_attempts}")
             if attempt < max_attempts:
                 await asyncio.sleep(2 * attempt)
     except httpx.HTTPError:
@@ -339,10 +340,10 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
         )
 
     if response.status_code >= 400:
-        print(f"[AI lookup] Gemini error {response.status_code}: {response.text[:500]}")
+        print(f"[AI lookup] NaraRouter error {response.status_code}: {response.text[:500]}")
         fail_message = (
             "The AI model is busy right now. Please try again in a few seconds."
-            if response.status_code == 503
+            if response.status_code in (429, 503)
             else f"AI lookup failed (HTTP {response.status_code}). Try typing the medicine name manually."
         )
         return MedicineMatchResponse(
@@ -355,9 +356,14 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
     data = response.json()
     output_text = None
     try:
-        output_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        output_text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        print(f"[AI lookup] Could not extract text from Gemini response: {data}")
+        print(f"[AI lookup] Could not extract text from NaraRouter response: {data}")
+
+    if output_text:
+        output_text = output_text.strip()
+        if output_text.startswith("```"):
+            output_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", output_text).strip()
 
     try:
         parsed = json.loads(output_text) if output_text else {}
@@ -395,9 +401,9 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
 
 
 async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str | None:
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("NARAROUTER_API_KEY")
     if not api_key:
-        print("[Image lookup] GEMINI_API_KEY not found in environment — check server/.env")
+        print("[Image lookup] NARAROUTER_API_KEY not found in environment — check server/.env")
         return None
 
     image_data = clean_base64_image(image)
@@ -406,24 +412,29 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
     except ValueError as error:
         raise HTTPException(status_code=400, detail="Invalid image data.") from error
 
-    model = os.getenv("GEMINI_VISION_MODEL", "gemini-3.5-flash")
+    base_url = os.getenv("NARAROUTER_BASE_URL", "https://router.bynara.id/v1")
+    model = os.getenv("NARAROUTER_VISION_MODEL", "claude-haiku-4.5")
     prompt = (
         "Extract only the likely medicine brand name or drug name "
         "from this medicine packaging image. Do not provide dosage "
-        "or medical advice. Return only JSON like "
+        "or medical advice. Return only JSON, with nothing else, like "
         '{"medicine_name":"name or null","confidence":0.0}.'
     )
 
     payload = {
-        "contents": [
+        "model": model,
+        "messages": [
             {
-                "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": mime_type, "data": image_data}},
-                ]
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
+                    },
+                ],
             }
         ],
-        "generationConfig": {"responseMimeType": "application/json"},
     }
 
     max_attempts = 3
@@ -431,24 +442,24 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
     for attempt in range(1, max_attempts + 1):
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                f"{base_url}/chat/completions",
                 headers={
-                    "x-goog-api-key": api_key,
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
             )
 
-        if response.status_code != 503:
+        if response.status_code not in (429, 503):
             break
 
-        print(f"[Image lookup] Gemini 503 (model overloaded), attempt {attempt}/{max_attempts}")
+        print(f"[Image lookup] NaraRouter {response.status_code} (busy/rate-limited), attempt {attempt}/{max_attempts}")
         if attempt < max_attempts:
             await asyncio.sleep(2 * attempt)
 
     if response.status_code >= 400:
-        print(f"[Image lookup] Gemini error {response.status_code}: {response.text[:500]}")
-        if response.status_code == 503:
+        print(f"[Image lookup] NaraRouter error {response.status_code}: {response.text[:500]}")
+        if response.status_code in (429, 503):
             raise HTTPException(
                 status_code=503,
                 detail="The AI model is busy right now. Please try again in a few seconds.",
@@ -458,12 +469,16 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
     data = response.json()
     output_text = None
     try:
-        output_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        output_text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        print(f"[Image lookup] Could not extract text from Gemini response: {data}")
+        print(f"[Image lookup] Could not extract text from NaraRouter response: {data}")
 
     if not output_text:
         return None
+
+    output_text = output_text.strip()
+    if output_text.startswith("```"):
+        output_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", output_text).strip()
 
     try:
         extracted = json.loads(output_text)

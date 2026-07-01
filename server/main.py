@@ -598,4 +598,4 @@ async def medicine_match(request: Request, payload: MedicineMatchRequest):
         result = await lookup_drug_with_ai(query)
     result.source = "text"
     print(f"[REQUEST] TEXT flow done → matchedName={result.matchedName!r} confidence={result.confidence}")
-    return results
+    return result

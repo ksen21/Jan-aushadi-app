@@ -278,9 +278,10 @@ def clean_base64_image(image: str) -> str:
 
 
 async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
+    # ── TEXT SEARCH → NaraRouter (free) ──────────────────────────────────
     api_key = os.getenv("NARAROUTER_API_KEY")
     if not api_key:
-        print("[AI lookup] NARAROUTER_API_KEY not found in environment — check server/.env")
+        print("[TEXT ❌] NARAROUTER_API_KEY missing — check server/.env")
         return MedicineMatchResponse(
             matchedName=None,
             confidence=0,
@@ -288,21 +289,21 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
             message="No confident match found. Try typing the medicine name manually.",
         )
 
-    print(f"[AI lookup] Calling NaraRouter for query={query!r}")
-
-    base_url = os.getenv("NARAROUTER_BASE_URL", "https://router.bynara.id/v1")
     model = os.getenv("NARAROUTER_TEXT_MODEL", "claude-haiku-4.5")
+    base_url = os.getenv("NARAROUTER_BASE_URL", "https://router.bynara.id/v1")
+    print(f"[TEXT →] NaraRouter | model={model} | query={query!r}")
+
     prompt = (
-        "You are identifying the generic (active ingredient) name "
-        "for a medicine brand name sold in India, for an app that "
-        "helps people find cheaper generic alternatives. "
-        "Do not give dosage, treatment, or safety advice. "
+        "You are a pharmaceutical expert for India. "
+        "Given a medicine brand name, find its exact drug composition (active ingredients with doses). "
+        "For example: 'Mygrum' → 'Ergotamine Tartrate 1mg + Caffeine 100mg', "
+        "'Dolo 650' → 'Paracetamol 650mg', 'Crocin' → 'Paracetamol 500mg'. "
+        "Return the composition/generic drug name, not the brand name. "
+        "If you are not confident, return null. "
         f'Brand name: "{query}". '
-        "If you are not confident about the generic name, return "
-        "null instead of guessing. "
-        "Respond with ONLY JSON in this exact shape, and nothing else: "
-        '{"generic_name": "name or null", '
-        '"common_strengths": ["e.g. 100mg", "..."], '
+        "Respond with ONLY JSON in this exact shape, nothing else: "
+        '{"generic_name": "full composition with doses, or null", '
+        '"common_strengths": ["e.g. 1mg+100mg", "..."], '
         '"confidence": 0.0}'
     )
 
@@ -328,10 +329,11 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
             if response.status_code not in (429, 503):
                 break
 
-            print(f"[AI lookup] NaraRouter {response.status_code} (busy/rate-limited), attempt {attempt}/{max_attempts}")
+            print(f"[TEXT ⚠] NaraRouter {response.status_code} rate-limited, attempt {attempt}/{max_attempts}")
             if attempt < max_attempts:
                 await asyncio.sleep(2 * attempt)
-    except httpx.HTTPError:
+    except httpx.HTTPError as e:
+        print(f"[TEXT ❌] NaraRouter network error: {e}")
         return MedicineMatchResponse(
             matchedName=None,
             confidence=0,
@@ -340,7 +342,7 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
         )
 
     if response.status_code >= 400:
-        print(f"[AI lookup] NaraRouter error {response.status_code}: {response.text[:500]}")
+        print(f"[TEXT ❌] NaraRouter HTTP {response.status_code}: {response.text[:300]}")
         fail_message = (
             "The AI model is busy right now. Please try again in a few seconds."
             if response.status_code in (429, 503)
@@ -358,7 +360,7 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
     try:
         output_text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        print(f"[AI lookup] Could not extract text from NaraRouter response: {data}")
+        print(f"[TEXT ❌] Could not parse NaraRouter response: {data}")
 
     if output_text:
         output_text = output_text.strip()
@@ -368,13 +370,13 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
     try:
         parsed = json.loads(output_text) if output_text else {}
     except json.JSONDecodeError:
-        print(f"[AI lookup] JSON parse failed on model output: {output_text!r}")
+        print(f"[TEXT ❌] JSON parse failed: {output_text!r}")
         parsed = {}
 
     generic_name = parsed.get("generic_name")
     confidence = parsed.get("confidence") or 0
 
-    print(f"[AI lookup] query={query!r} -> generic_name={generic_name!r} confidence={confidence}")
+    print(f"[TEXT ✓] NaraRouter replied | generic_name={generic_name!r} | confidence={confidence}")
 
     if not generic_name or generic_name == "null" or confidence < 0.6:
         return MedicineMatchResponse(
@@ -401,9 +403,10 @@ async def lookup_drug_with_ai(query: str) -> MedicineMatchResponse:
 
 
 async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str | None:
-    api_key = os.getenv("NARAROUTER_API_KEY")
+    # ── IMAGE SEARCH → Groq (free, vision supported) ─────────────────────
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        print("[Image lookup] NARAROUTER_API_KEY not found in environment — check server/.env")
+        print("[IMAGE ❌] GROQ_API_KEY missing — check server/.env")
         return None
 
     image_data = clean_base64_image(image)
@@ -412,17 +415,23 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
     except ValueError as error:
         raise HTTPException(status_code=400, detail="Invalid image data.") from error
 
-    base_url = os.getenv("NARAROUTER_BASE_URL", "https://router.bynara.id/v1")
-    model = os.getenv("NARAROUTER_VISION_MODEL", "claude-haiku-4.5")
+    model = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+    print(f"[IMAGE →] Groq | model={model} | mime={mime_type} | size={len(image_data)} chars")
+
     prompt = (
-        "Extract only the likely medicine brand name or drug name "
-        "from this medicine packaging image. Do not provide dosage "
-        "or medical advice. Return only JSON, with nothing else, like "
-        '{"medicine_name":"name or null","confidence":0.0}.'
+        "You are a pharmaceutical expert. Look at this medicine packaging image. "
+        "1. Find the BRAND NAME printed on the box/strip (e.g. 'Mygrum', 'Dolo 650', 'Crocin'). "
+        "2. From that brand name, identify the full DRUG COMPOSITION with doses "
+        "(e.g. 'Ergotamine Tartrate 1mg + Caffeine 100mg', 'Paracetamol 650mg'). "
+        "Return ONLY JSON, nothing else: "
+        '{"brand_name": "brand name or null", '
+        '"drug_composition": "full composition with doses or null", '
+        '"confidence": 0.0}'
     )
 
     payload = {
         "model": model,
+        "max_tokens": 256,
         "messages": [
             {
                 "role": "user",
@@ -440,9 +449,9 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
     max_attempts = 3
     response = None
     for attempt in range(1, max_attempts + 1):
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
-                f"{base_url}/chat/completions",
+                "https://api.groq.com/openai/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
@@ -453,12 +462,12 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
         if response.status_code not in (429, 503):
             break
 
-        print(f"[Image lookup] NaraRouter {response.status_code} (busy/rate-limited), attempt {attempt}/{max_attempts}")
+        print(f"[IMAGE ⚠] Groq {response.status_code} rate-limited, attempt {attempt}/{max_attempts}")
         if attempt < max_attempts:
             await asyncio.sleep(2 * attempt)
 
     if response.status_code >= 400:
-        print(f"[Image lookup] NaraRouter error {response.status_code}: {response.text[:500]}")
+        print(f"[IMAGE ❌] Groq HTTP {response.status_code}: {response.text[:300]}")
         if response.status_code in (429, 503):
             raise HTTPException(
                 status_code=503,
@@ -471,9 +480,10 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
     try:
         output_text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        print(f"[Image lookup] Could not extract text from NaraRouter response: {data}")
+        print(f"[IMAGE ❌] Could not parse Groq response: {data}")
 
     if not output_text:
+        print("[IMAGE ❌] Groq returned empty content")
         return None
 
     output_text = output_text.strip()
@@ -483,12 +493,23 @@ async def extract_medicine_name_with_gemini(image: str, mime_type: str) -> str |
     try:
         extracted = json.loads(output_text)
     except json.JSONDecodeError:
+        print(f"[IMAGE ⚠] JSON parse failed, using raw text: {output_text!r}")
         return output_text.strip()[:120] or None
 
-    medicine_name = extracted.get("medicine_name")
+    medicine_name = extracted.get("brand_name")
+    drug_composition = extracted.get("drug_composition")
+
     if not medicine_name or medicine_name == "null":
+        print(f"[IMAGE ✓] Groq replied but no brand name found | confidence={extracted.get('confidence',0)}")
         return None
-    return str(medicine_name)
+
+    # drug_composition bhi attach karo taaki endpoint use kar sake
+    result_name = medicine_name
+    if drug_composition and drug_composition != "null":
+        result_name = f"{medicine_name}||{drug_composition}"  # separator se dono bhejo
+
+    print(f"[IMAGE ✓] Groq replied | brand={medicine_name!r} | drug={drug_composition!r} | confidence={extracted.get('confidence',0)}")
+    return result_name
 
 
 @app.get("/health")
@@ -507,31 +528,59 @@ def kendra_search(
 @app.post("/api/medicine-match", response_model=MedicineMatchResponse)
 @limiter.limit("10/minute")
 async def medicine_match(request: Request, payload: MedicineMatchRequest):
-    query = (payload.text or "").strip()
-    source = "text"
 
+    # ── IMAGE MODE: Groq ek hi call mein brand + drug composition nikale ─
     if payload.image:
+        print("[REQUEST] Mode=IMAGE — Groq will read brand name + drug composition in 1 call")
         if payload.mimeType not in ALLOWED_IMAGE_TYPES:
             raise HTTPException(status_code=400, detail="Only JPG, PNG, or WebP images are allowed.")
-        extracted_name = await extract_medicine_name_with_gemini(payload.image, payload.mimeType)
-        if not extracted_name:
+
+        groq_result = await extract_medicine_name_with_gemini(payload.image, payload.mimeType)
+
+        if not groq_result:
+            print("[REQUEST] IMAGE failed — Groq could not read medicine from photo")
             return MedicineMatchResponse(
                 matchedName=None,
                 confidence=0,
                 source="image",
-                message="No confident match found. Try typing the medicine name manually.",
+                message="Could not read medicine name from photo. Try typing the name manually.",
             )
-        query = extracted_name
-        source = "image"
 
+        # Groq ne "BrandName||DrugComposition" format mein diya
+        if "||" in groq_result:
+            brand_name, drug_composition = groq_result.split("||", 1)
+            print(f"[REQUEST] IMAGE — Groq gave both: brand={brand_name!r} drug={drug_composition!r}")
+            print(f"[REQUEST] IMAGE — NaraRouter skipped (Groq already found composition) ✅")
+            return MedicineMatchResponse(
+                matchedName=brand_name,
+                genericName=drug_composition,
+                confidence=0.95,
+                source="image",
+                aiGenerated=True,
+                message="Drug composition identified from photo by AI. Confirm with a pharmacist before buying.",
+            )
+        else:
+            # Groq ko composition nahi mila — NaraRouter se try karo
+            brand_name = groq_result
+            print(f"[REQUEST] IMAGE — Groq found brand={brand_name!r} but no composition")
+            print(f"[REQUEST] IMAGE — Fallback: NaraRouter will find drug composition")
+            result = find_best_match(brand_name)
+            if result.matchedName is None:
+                result = await lookup_drug_with_ai(brand_name)
+            result.source = "image"
+            result.matchedName = brand_name
+            print(f"[REQUEST] IMAGE fallback done — drug={result.genericName!r} confidence={result.confidence}")
+            return result
+
+    # ── TEXT MODE: sirf NaraRouter, Groq bilkul call nahi ───────────────
+    query = (payload.text or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="Enter a medicine name or upload a medicine photo.")
 
+    print(f"[REQUEST] Mode=TEXT — only NaraRouter will be called (Groq skipped)")
     result = find_best_match(query)
     if result.matchedName is None:
-        # Static Jan Aushadi list didn't have a confident match — ask the AI
-        # to identify the generic name instead of giving up.
         result = await lookup_drug_with_ai(query)
-
-    result.source = source
+    result.source = "text"
+    print(f"[REQUEST] TEXT flow done → matchedName={result.matchedName!r} confidence={result.confidence}")
     return result

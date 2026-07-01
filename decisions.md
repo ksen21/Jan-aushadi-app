@@ -50,8 +50,50 @@ Decision: Ran Phase 4 (Security Pass) against the build plan checklist. Added ra
 
 Reason: This endpoint now calls a paid OpenAI API on cache misses (both for image extraction and the AI drug-name fallback), so an unlimited endpoint risks an unexpected bill if hit repeatedly by a script or bot. Verified with a real 12-request burst test: requests 1-10 returned 200, requests 11-12 returned 429 as expected. All other checklist items were verified directly against the codebase and passed without changes: no hardcoded API keys (checked via grep + git history for .env), .env* correctly gitignored except .env.example, image size capped at 5MB on both frontend and backend, no logging or persistence of uploaded images or search text anywhere in the code, and the image MIME type allow-list is enforced server-side (not just in the frontend file picker), so it can't be bypassed by calling the API directly
 
-2026-06-29
+## 2026-06-29
 
 Decision: Switched both AI integrations (text-based generic-name lookup in lookup_drug_with_ai, and image-based medicine-name extraction in extract_medicine_name_with_gemini) from OpenAI to Google's Gemini API (gemini-3.5-flash, REST via generateContent).
 
 Reason: The user wants to use a free-tier AI provider rather than paid OpenAI/Anthropic credits. Both functions now read GEMINI_API_KEY from .env, call https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent with x-goog-api-key auth, and use generationConfig.responseMimeType: "application/json" to keep structured-output parsing reliable (same approach used previously with OpenAI's JSON mode). All existing safety behavior is preserved: confidence threshold of 0.6 for the text fallback, aiGenerated: true tagging, janAushadiAvailable forced to false for AI-sourced matches, and debug print statements on every failure path (missing key, HTTP error, empty/unparseable model output) so future issues are visible in the server console instead of silently returning "no match."
+
+
+## 2026-06-28
+
+Decision: Built the Kendra List screen (Phase 2.3) as a view-switch inside the existing single-page app (app/page.tsx), not a separate route.
+
+Reason: Consistent with how Phase 1's Result Screen was already built (same page, state-driven view, not Next.js routing). Added a "Find nearby Jan Aushadi Kendra" button to the medicine match result, which requests browser geolocation; on denial, a manual locality input maps a small set of known Indore area names to approximate coordinates so the kendra-search endpoint still gets a usable lat/lng. Also added the WhatsApp link-generator function here (buildWhatsAppLink) since it's needed to render each kendra card's contact button — this gets the core Phase 3 logic in place early, but the dedicated Phase 3 testing pass (malformed numbers, full WhatsApp flow) is still pending.
+
+## 2026-06-28
+
+Decision: Added an AI fallback (lookup_drug_with_ai, OpenAI text model) for brand names that don't match anything in the static medicines.json list — e.g. "Itracip 100" → "Itraconazole" with strengths like 100mg/200mg.
+
+Reason: The static list only covers a handful of pre-verified medicines and can never cover every Indian brand name. The static list is still checked first (fast, pre-verified, marked janAushadiAvailable accurately); the AI is only consulted on a miss. To control hallucination risk on medical data: the AI is prompted to return null rather than guess if unsure, results below 0.6 confidence are rejected outright, and any AI-sourced result is tagged aiGenerated: true with janAushadiAvailable forced to false (unknown, not verified) and a message telling the user to confirm with a pharmacist. The frontend shows a distinct amber warning box for AI-sourced matches so they're visually different from verified Jan Aushadi matches. The same fallback applies to both the text path and the image path, since image search already funnels into find_best_match via the extracted name.
+
+## 2026-06-28
+
+Decision: Ran Phase 4 (Security Pass) against the build plan checklist. Added rate limiting (slowapi, 10 requests/minute per IP) to POST /api/medicine-match, the one item that was missing.
+
+Reason: This endpoint now calls a paid OpenAI API on cache misses (both for image extraction and the AI drug-name fallback), so an unlimited endpoint risks an unexpected bill if hit repeatedly by a script or bot. Verified with a real 12-request burst test: requests 1-10 returned 200, requests 11-12 returned 429 as expected. All other checklist items were verified directly against the codebase and passed without changes: no hardcoded API keys (checked via grep + git history for .env), .env* correctly gitignored except .env.example, image size capped at 5MB on both frontend and backend, no logging or persistence of uploaded images or search text anywhere in the code, and the image MIME type allow-list is enforced server-side (not just in the frontend file picker), so it can't be bypassed by calling the API directly
+
+## 2026-06-29
+
+Decision: Switched both AI integrations (text-based generic-name lookup in lookup_drug_with_ai, and image-based medicine-name extraction in extract_medicine_name_with_gemini) from OpenAI to Google's Gemini API (gemini-3.5-flash, REST via generateContent).
+
+Reason: The user wants to use a free-tier AI provider rather than paid OpenAI/Anthropic credits. Both functions now read GEMINI_API_KEY from .env, call https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent with x-goog-api-key auth, and use generationConfig.responseMimeType: "application/json" to keep structured-output parsing reliable (same approach used previously with OpenAI's JSON mode). All existing safety behavior is preserved: confidence threshold of 0.6 for the text fallback, aiGenerated: true tagging, janAushadiAvailable forced to false for AI-sourced matches, and debug print statements on every failure path (missing key, HTTP error, empty/unparseable model output) so future issues are visible in the server console instead of silently returning "no match."
+
+## 2026-07-01
+
+Decision: Completed Phase 5 (Polish & Deploy) checklist items.
+
+Changes made:
+
+
+CORS origins in server/main.py are now configurable via ALLOWED_ORIGINS (comma-separated env var), instead of hardcoded to localhost only. Required for the production Vercel frontend to be able to call the Render backend.
+Fixed an unresolved git merge conflict left in README.md; rewrote it with accurate setup/deploy instructions matching the actual stack (NaraRouter for text, Groq for image, Render for backend).
+.env.example was stale (listed MONGODB_URI, ANTHROPIC_API_KEY, OPENAI_API_KEY — none of which the code uses). Replaced with the real vars: NARAROUTER_API_KEY, NARAROUTER_TEXT_MODEL, NARAROUTER_BASE_URL, GROQ_API_KEY, GROQ_VISION_MODEL, KENDRA_SHEET_CSV_URL, ALLOWED_ORIGINS, NEXT_PUBLIC_API_BASE_URL.
+Added app/error.tsx (Next.js error boundary) so a runtime crash or backend-down scenario shows a "Try again" screen instead of a blank/broken page.
+Added an explicit empty state on the Kendra List screen for when geolocation succeeds but zero kendras are returned (previously rendered nothing).
+Minor mobile fix: long uploaded image file names now truncate instead of overflowing on small screens.
+
+
+Open item flagged for the user, not resolved here: lookup_drug_with_ai sends medicine search text to a third-party service (NaraRouter, router.bynara.id) not previously documented in this log — worth confirming this is an intentionally trusted provider before relying on it in production.

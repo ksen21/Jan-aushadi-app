@@ -236,6 +236,8 @@ export default function Home() {
                 placeholder="Example: Crocin, Calpol, Pantocid"
                 className="mt-2 h-12 w-full rounded-md border border-slate-300 px-3 text-base outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
                 maxLength={120}
+                autoComplete="off"
+                suppressHydrationWarning
               />
               <div className="mt-5">
                 <label htmlFor="medicine-photo" className="text-sm font-semibold text-slate-900">
@@ -248,7 +250,9 @@ export default function Home() {
                   onChange={handleImageChange}
                   className="mt-2 block w-full rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-emerald-700 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
                 />
-                {imageName ? <p className="mt-2 text-sm text-slate-600">Selected: {imageName}</p> : null}
+                {imageName ? (
+                  <p className="mt-2 truncate text-sm text-slate-600">Selected: {imageName}</p>
+                ) : null}
               </div>
               <button
                 type="submit"
@@ -374,6 +378,13 @@ export default function Home() {
                   Find kendras near this area
                 </button>
               </form>
+            ) : null}
+
+            {!isLoadingKendras && !kendraError && kendras.length === 0 && !locationDenied ? (
+              <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                No Jan Aushadi Kendra found near your location yet. Try entering a nearby area manually,
+                or check back later as we add more verified kendras.
+              </div>
             ) : null}
 
             {kendras.length > 0 ? (

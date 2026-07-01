@@ -28,9 +28,24 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Local dev origins are always allowed. Production origins (e.g. the deployed
+# Vercel URL) come from ALLOWED_ORIGINS in .env / the Render dashboard as a
+# comma-separated list, e.g. "https://jan-aushadi-finder.vercel.app,https://janaushadi.in"
+_default_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_extra_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if not _extra_origins:
+    print(
+        "[CORS ⚠] ALLOWED_ORIGINS not set — only localhost is allowed. "
+        "Set ALLOWED_ORIGINS on Render to your Vercel URL before going live."
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_default_origins + _extra_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -583,4 +598,4 @@ async def medicine_match(request: Request, payload: MedicineMatchRequest):
         result = await lookup_drug_with_ai(query)
     result.source = "text"
     print(f"[REQUEST] TEXT flow done → matchedName={result.matchedName!r} confidence={result.confidence}")
-    return result
+    return results

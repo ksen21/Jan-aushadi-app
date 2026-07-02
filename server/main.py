@@ -160,9 +160,14 @@ def extract_lat_lng_from_maps_url(maps_url: str) -> tuple[float, float] | None:
         return None
 
     coord_pattern = r"(-?\d{1,3}\.\d+),\s*(-?\d{1,3}\.\d+)"
+    # Some Maps "place" redirects encode coordinates as !3d<lat>!4d<lng> in the
+    # data parameter instead of the usual @lat,lng — check this as a fallback.
+    data_coord_pattern = r"!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)"
 
     def parse_coords(url: str) -> tuple[float, float] | None:
         match = re.search(coord_pattern, url)
+        if not match:
+            match = re.search(data_coord_pattern, url)
         if not match:
             return None
         lat, lng = float(match.group(1)), float(match.group(2))
@@ -207,6 +212,7 @@ def fetch_kendras_from_sheet(csv_url: str) -> list[dict[str, Any]]:
         if not coords:
             # Skip rows where coordinates can't be determined yet, instead of
             # crashing the whole endpoint over one bad/incomplete row.
+            print(f"[Kendra] Skipping {name!r} — could not resolve lat/lng from maps_url: {maps_url!r}")
             continue
 
         lat, lng = coords
